@@ -4,6 +4,7 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from amadeus import Client, ResponseError
 from dotenv import load_dotenv
+import airportsdata
 
 load_dotenv()
 CLIENT_ID = os.getenv("AMADEUS_CLIENT_ID")
@@ -17,15 +18,52 @@ amadeus = Client(
 # todo: break this into multiple functions so they can be re-used for other API endpoints
 # e.g. find just a plane to a destination, or just points of interest etc
 
+# this uses airportsdata to fetch the city and country from an airport IATA code
+def get_airport_info(airport_code):
+    airports = airportsdata.load('IATA')
+    if airport_code in airports:
+        airport = airports[airport_code]
+        city = airport['city']
+        country = airport['country']
+        return city, country
+    else:
+        return "Airport not found.", "N/A"
+
+# this dynamically creates booking links for the customer's destionation with proper dates and other data
+def create_booking_url(airport_code, checkin_date, checkout_date, adults, children):
+    city, country = get_airport_info(airport_code)
+    if country == "N/A":
+        return city  # todo: return error
+
+    checkin_year, checkin_month, checkin_day = checkin_date.split('-')
+    checkout_year, checkout_month, checkout_day = checkout_date.split('-')
+
+    # generate a booking link for the destionation
+    url = (
+        f"https://www.booking.com/searchresults.html?"
+        f"ss={city}+{country}&"
+        f"checkin_year={checkin_year}&"
+        f"checkin_month={checkin_month}&"
+        f"checkin_monthday={checkin_day}&"
+        f"checkout_year={checkout_year}&"
+        f"checkout_month={checkout_month}&"
+        f"checkout_monthday={checkout_day}&"
+        f"group_adults={adults}&"
+        f"group_children={children}"
+    )
+
+    return url
+
 @api_view(['GET'])
 def get_flight_offers(request):
     try:
         data = request.data 
         
         origin = data.get("originLocationCode", "BUH")
-        destination = data.get("destinationLocationCode", "JFK")
+        destination = data.get("destinationLocationCode", "MBJ")
         departure_date = data.get("departureDate", "2025-03-15")
         adults = data.get("adults", 1)
+        children = data.get("children", 0)
         currency = data.get("currencyCode", "EUR")
         max_results = data.get("max", 5)
         travel_class = data.get("travelClass", "BUSINESS")
@@ -53,7 +91,6 @@ def get_flight_offers(request):
             max=max_results,
             travelClass=travel_class,
         )
-        
         if not response.data:
             return JsonResponse({"error": "No flights found for the given criteria."}, status=404)
         
@@ -97,28 +134,11 @@ def get_flight_offers(request):
         if len(flight_offers) < 1:
             return JsonResponse({"error": "No flights found for the given criteria."}, status=404)
 
-        # search for hotels
-        hotel_response = amadeus.reference_data.locations.hotels.by_city.get(cityCode=destination)
-        hotel_ids = []
-        cnt = 0
-        if hotel_response.data:
-            for hotel in hotel_response.data:
-                if cnt == 5: # temporary(?) 5 hotel limit, as the API does not have a count/max parameter
-                    break
-                cnt += 1
-                hotel_ids.append(hotel["hotelId"])
         rooms = str(math.ceil(adults / 2))
-        hotel_offers_response = amadeus.shopping.hotel_offers_search.get(hotelIds=hotel_ids, adults="2", roomQuantity=rooms, checkInDate=departure_date)
-        hotel_offers = []
-        if hotel_offers_response.data:
-            for hotel in hotel_offers_response.data[0]["offers"]:
-                # todo: filter the information received and only return useful stuff
-                hotel_offers.append(hotel)
-        
-        # no need to error in case no hotels are found, just gonna inform the user that we couldn't find any
-        # and link them to a booking.com link with their city of destination
+        # todo:     
+        hotels_link = create_booking_url(destination, departure_date, "2025-05-19", adults, children)
         # todo: perhaps search for points of interest
-        return JsonResponse({"flights": flight_offers, "hotels": hotel_offers}, safe=False, json_dumps_params={'indent': 2})
+        return JsonResponse({"flights": flight_offers, "hotels": hotels_link}, safe=False, json_dumps_params={'indent': 2})
     
     except ResponseError as error:
         return JsonResponse({"error": str(error)}, status=400)
