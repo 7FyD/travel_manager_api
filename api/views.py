@@ -1,5 +1,10 @@
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+
 from django.http import JsonResponse
-from rest_framework.decorators import api_view
 from amadeus import ResponseError
 
 from .services.hotel_services import create_booking_url
@@ -9,6 +14,7 @@ from datetime import datetime
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def travel_planner(request):
     try:
         params = request.query_params
